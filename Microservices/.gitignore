@@ -1,0 +1,23 @@
+# virtual environments (Docker installs packages inside the image instead)
+myenv/
+venv/
+.venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+
+# secrets
+.env
+
+# database dumps
+*.sql
+!db/init.sql
+
+# editor / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+db.sqlite3

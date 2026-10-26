@@ -1,0 +1,71 @@
+services:
+
+  # ---------- one Postgres server, two databases (drf + fastapi_db) ----------
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql                             # keeps data when containers stop
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro  # creates both databases (first run)
+    ports:
+      - "5433:5432"          # 5433 on your PC, so it doesn't clash with local Postgres on 5432
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ---------- FastAPI service ----------
+  fastapi:
+    build: ./FastAPI
+    command: uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@db:5432/fastapi_db
+      JWT_SECRET: ${JWT_SECRET}      # checks tokens signed by DRF (and signs its own)
+    volumes:
+      - ./FastAPI:/app       # your code, live: edit in VS Code, the server reloads
+    ports:
+      - "8001:8001"          # direct access for /docs while learning; the gateway is the real front door
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ---------- DRF service ----------
+  drf:
+    build: ./drf
+    command: sh -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"
+    environment:
+      DB_NAME: drf
+      DB_USER: postgres
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_HOST: db            # the service name above, not localhost
+      DB_PORT: "5432"
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,drf
+      FASTAPI_BASE_URL: http://fastapi:8001   # service-to-service calls go direct, not through the gateway
+      JWT_SECRET: ${JWT_SECRET}      # NEW: same key as FastAPI, so FastAPI trusts DRF's tokens
+    volumes:
+      - ./drf:/app
+    ports:
+      - "8000:8000"          # direct access for the browsable API while learning
+    depends_on:
+      db:
+        condition: service_healthy
+      fastapi:
+        condition: service_started
+
+  # ---------- NEW: API gateway (Nginx), the single front door ----------
+  gateway:
+    image: nginx:alpine
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro   # our routing rules
+    ports:
+      - "9000:80"            # 9000 on your PC -> port 80 inside the Nginx container              # http://localhost/drf/... and http://localhost/fastapi/...
+    depends_on:
+      - drf
+      - fastapi
+
+volumes:
+  pgdata:
